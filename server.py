@@ -44,7 +44,10 @@ def classify():
         non_scam_prob = scam_probs[0][0].item() # Probability of 'non-scam'
 
     # FLAN-T5 reply suggestion
-    reply_input = f"Given the following conversation: {conversation}\nSuggest a natural and engaging reply to continue the conversation."
+    reply_input = f"""
+    Given the following telephonic conversation: {conversation}
+    Generate a reply that subtly tests the caller's intentions by asking for clarification, additional details, or confirmation of their claims. The reply should be polite, natural, and engaging, while encouraging the caller to provide more information.
+    """
     reply_inputs = flan_tokenizer(reply_input, return_tensors="pt", truncation=True, padding=True, max_length=512)
     
     with torch.no_grad():

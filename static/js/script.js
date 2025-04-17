@@ -7,6 +7,7 @@ let recognitionReady = false;
 const startBtn = document.getElementById('startBtn');
 const transcriptEl = document.getElementById('transcript');
 const scamProbEl = document.getElementById('scam-prob');
+const suggestedReplyEl = document.getElementById('suggested-reply');
 
 const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
 recognition.continuous = true;
