@@ -58,6 +58,11 @@ recognition.onresult = async (event) => {
             } else {
                 console.log('Classification error:', data.error);
             }
+            if (data.suggested_reply) {
+                suggestedReplyEl.innerText = data.suggested_reply; // Update the suggested reply
+            } else {
+                console.log('Error in getting reply:', data.error);
+            }
         }
     }
 };

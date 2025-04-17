@@ -44,22 +44,24 @@ def classify():
         non_scam_prob = scam_probs[0][0].item() # Probability of 'non-scam'
 
     # FLAN-T5 reply suggestion
-    reply_input = f"Conversation: {conversation} Suggest a reply to keep the conversation going."
+    reply_input = f"Given the following conversation: {conversation}\nSuggest a natural and engaging reply to continue the conversation."
     reply_inputs = flan_tokenizer(reply_input, return_tensors="pt", truncation=True, padding=True, max_length=512)
     
     with torch.no_grad():
         reply_outputs = flan_model.generate(
             reply_inputs['input_ids'],
-            max_length=50,  # Limit the length of the response
+            max_length=100,  # Limit the length of the response
             num_beams=3,    # Use beam search for better quality
             no_repeat_ngram_size=2,  # Prevent repetition of n-grams
             early_stopping=True
         )
+
         
     suggested_reply = flan_tokenizer.decode(reply_outputs[0], skip_special_tokens=True)
+    print("Generated Reply:", suggested_reply)
     return jsonify({
         "scam_probability": round(scam_prob, 4),
-         "non_scam_probability": round(non_scam_prob, 4),
+        "non_scam_probability": round(non_scam_prob, 4),
         "suggested_reply": suggested_reply
     })
 
