@@ -1,0 +1,40 @@
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f9f9f9;
+    text-align: center;
+    padding: 20px;
+}
+
+h1 {
+    color: #4CAF50;
+}
+
+button {
+    background-color: #008CBA;
+    color: white;
+    font-size: 16px;
+    padding: 10px 20px;
+    border: none;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #005f6a;
+}
+
+#transcript {
+    margin-top: 20px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    max-width: 600px;
+    margin: auto;
+    background-color: #fff;
+    font-size: 14px;
+    text-align: left;
+}
+
+#scam-prob {
+    font-size: 18px;
+    color: #ff0000;
+    font-weight: bold;
+}

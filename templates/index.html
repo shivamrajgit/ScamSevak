@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Live Transcription with Scam Detection</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+  <h1>Live Transcription</h1>
+  <button id="startBtn">Start Listening</button>
+  <p id="transcript"></p>
+  <p><strong>Scam Probability:</strong> <span id="scam-prob">0</span></p>
+
+  <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
