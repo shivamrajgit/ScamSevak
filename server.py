@@ -1,66 +1,39 @@
 from flask import Flask, request, jsonify, render_template
-from flask_cors import CORS
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import torch.nn.functional as F
-import requests
-import os
-
+from flask_cors import CORS
 from dotenv import load_dotenv
 import os
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableLambda
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-load_dotenv() 
+load_dotenv()
 
-HF_TOKEN = os.getenv("HF_TOKEN")
-
-
-app = Flask(__name__, static_folder='static', template_folder='templates')
-CORS(app)
-
-# Load the scam classifier model
-scam_model_name = "BothBosu/bert-agent-scam-classifier-v1.0"
-scam_tokenizer = AutoTokenizer.from_pretrained(scam_model_name)
-scam_model = AutoModelForSequenceClassification.from_pretrained(scam_model_name)
+SCAM_MODEL_NAME = "BothBosu/bert-agent-scam-classifier-v1.0"
+SCAM_TOKENIZER = AutoTokenizer.from_pretrained(SCAM_MODEL_NAME)
+SCAM_MODEL = AutoModelForSequenceClassification.from_pretrained(SCAM_MODEL_NAME)
 
 
-
-# Hugging Face Inference API settings
-HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mixtral-8x7B-Instruct-v0.1"
-HF_API_KEY =  os.getenv("HF_TOKEN")
-hf_headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/classify', methods=['POST'])
-def classify():
-    data = request.get_json()
-    conversation = data.get("conversation", "")
-
-    # Replace speaker tags
-    conversation = conversation.replace("Speaker 1:", "Receiver:").replace("Speaker 2:", "Caller:")
-
-    if not conversation.strip():
-        return jsonify({"error": "Empty conversation"}), 400
-
-    print("Input conversation:", conversation)
-
-    # Run scam classifier
-    scam_inputs = scam_tokenizer(conversation, return_tensors="pt", truncation=True, padding=True, max_length=512)
+def get_scam_probability(conversation: str) -> float:
+    """
+    Calculates the scam probability for a given conversation using the pre-loaded model.
+    """
+    scam_inputs = SCAM_TOKENIZER(conversation, return_tensors="pt", truncation=True, padding=True, max_length=512)
     with torch.no_grad():
-        scam_outputs = scam_model(**scam_inputs)
+        scam_outputs = SCAM_MODEL(**scam_inputs)
         scam_probs = F.softmax(scam_outputs.logits, dim=1)
         scam_prob = scam_probs[0][1].item()
-        non_scam_prob = scam_probs[0][0].item()
+    return scam_prob
 
-    # Prompt for reply generation
-    if scam_prob < 0.4:
-        suggested_reply = "No Reply needed, it's likely a non-scam conversation."
-    elif scam_prob > 0.65:
-        suggested_reply = "No Reply needed, it's likely a scam."
-    else:
-        hf_prompt = f"""
+
+def create_reply_generation_chain():
+    """
+    Creates a LangChain chain for generating a suggested reply using Google Gemini.
+    """
+    prompt_template = """
         You are the Receiver in the following conversation:
 
         {conversation}
@@ -75,39 +48,79 @@ def classify():
         Only output the reply sentence. Do NOT repeat the conversation.
 
         Reply:
-        """
+    """
+    prompt = PromptTemplate(
+        template=prompt_template,
+        input_variables=["conversation"]
+    )
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash", 
+        temperature=0.7,
+        max_output_tokens=50
+    )
+
+    chain = prompt | llm | StrOutputParser()
+    return chain
+
+
+app = Flask(__name__, static_folder='static', template_folder='templates')
+CORS(app)
+
+scam_classification_chain = RunnableLambda(get_scam_probability)
+reply_generation_chain = create_reply_generation_chain()
+
+@app.route('/')
+def index():
+    """Serves the main HTML page."""
+    return render_template('index.html')
+
+@app.route('/classify', methods=['POST'])
+def classify():
+    """
+    Classifies a conversation as scam or not and suggests a reply if uncertain.
+    """
+    data = request.get_json()
+    conversation = data.get("conversation", "")
+
+    if not conversation.strip():
+        return jsonify({"error": "Empty conversation"}), 400
+
+    turns = [turn for turn in conversation.strip().split('\n') if turn.strip()]
+    if len(turns) < 4:
+        return jsonify({
+            "scam_probability": 0.0,
+            "non_scam_probability": 1.0,
+            "suggested_reply": "Add more conversation to start scam detection. At least 2 Caller-Receiver cycles are needed."
+        })
+
+    caller_conversation = "\n".join([turn for turn in turns if turn.lower().startswith('caller:')])
+
+    print("Caller conversation for scam detection:\n", caller_conversation)
+
+    try:
+        scam_prob = scam_classification_chain.invoke(caller_conversation)
+        non_scam_prob = 1.0 - scam_prob
+    except (ValueError, TypeError) as e:
+        print(f"Error parsing scam probability: {e}")
+        return jsonify({"error": "Could not determine scam probability from model output."}), 500
+    except Exception as e:
+        print(f"Scam classification invocation error: {e}")
+        return jsonify({"error": f"Error during scam classification: {str(e)}"}), 500
+
+    if scam_prob < 0.4:
+        suggested_reply = "No Reply needed, it's likely a non-scam conversation."
+    elif scam_prob > 0.65:
+        suggested_reply = "No Reply needed, it's likely a scam."
+    else:
         try:
-            hf_response = requests.post(
-                HF_API_URL,
-                headers=hf_headers,
-                json={
-                    "inputs": hf_prompt,
-                    "parameters": {
-                        "max_new_tokens": 50,  # Limit the response length
-                        "temperature": 0.7,
-                        "do_sample": True,
-                        "top_p": 0.9,
-                        "return_full_text": False
-                    }
-                }
-            )
-
-            hf_response.raise_for_status()  # Raise error if the API call fails
-
-            # Get the reply from the response
-            # suggested_reply = hf_response.json().get("generated_text", "Sorry, couldn't generate a reply.")
-            response_data = hf_response.json()
-            if isinstance(response_data, list):
-
-                # Handle the list (usually we want the first item in the list)
-                raw_reply = response_data[0].get("generated_text", "Sorry, couldn't generate a reply.")
-                cleaned_reply = raw_reply.strip().replace('\n', ' ').strip()
-                suggested_reply = cleaned_reply if cleaned_reply else "Sorry, couldn't generate a reply."
-            else:
-                suggested_reply = "Unexpected response format."
+            raw_reply = reply_generation_chain.invoke({"conversation": conversation})
+            cleaned_reply = raw_reply.strip().replace("\n", " ").strip()
+            suggested_reply = cleaned_reply if cleaned_reply else "Sorry, couldn't generate a reply."
         except Exception as e:
             suggested_reply = f"Error generating reply: {str(e)}"
-            print("Hugging Face API error:", e)
+            print(f"LangChain invocation error: {e}")
+
     return jsonify({
         "scam_probability": round(scam_prob, 4),
         "non_scam_probability": round(non_scam_prob, 4),

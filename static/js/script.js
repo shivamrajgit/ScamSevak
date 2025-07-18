@@ -1,7 +1,7 @@
 let recognizing = false;
 let finalTranscript = '';
 let fullConversation = '';
-let speakerIndex = 1;
+let currentSpeaker = 'Receiver';
 let recognitionReady = false;
 
 const startBtn = document.getElementById('startBtn');
@@ -13,7 +13,6 @@ const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognit
 recognition.continuous = true;
 recognition.interimResults = false;
 
-// Set when the engine is ready
 recognition.onstart = () => {
     console.log("Speech recognition started.");
     recognizing = true;
@@ -32,42 +31,6 @@ recognition.onend = () => {
     startBtn.textContent = 'Start Listening';
 };
 
-
-recognition.onresult = async (event) => {
-    for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-            const text = event.results[i][0].transcript.trim();
-            const labeled = `Speaker ${speakerIndex}: ${text}`;
-            fullConversation += labeled + '\n';
-            transcriptEl.innerText = fullConversation;
-
-            // Alternate speakers
-            speakerIndex = speakerIndex === 1 ? 2 : 1;
-
-            // Send to backend
-            const response = await fetch('/classify', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ conversation: fullConversation })
-            });
-
-            const data = await response.json();
-            if (data.scam_probability !== undefined) {
-                scamProbEl.innerText = data.scam_probability;
-            } else {
-                console.log('Classification error:', data.error);
-            }
-            if (data.suggested_reply) {
-                suggestedReplyEl.innerText = data.suggested_reply; // Update the suggested reply
-            } else {
-                console.log('Error in getting reply:', data.error);
-            }
-        }
-    }
-};
-
 startBtn.addEventListener('click', () => {
     if (!recognitionReady) {
         console.warn("Speech recognition engine not ready yet. Please wait a moment.");
@@ -84,11 +47,10 @@ startBtn.addEventListener('click', () => {
     } else {
         recognition.stop();
         startBtn.textContent = 'Start Listening';
-        // Reset everything
         fullConversation = '';
         transcriptEl.innerText = '';
         scamProbEl.innerText = '0';
-        speakerIndex = 1;
+        currentSpeaker = 'Receiver';
     }
     recognizing = !recognizing;
 });
@@ -97,14 +59,17 @@ recognition.onresult = async (event) => {
     for (let i = event.resultIndex; i < event.results.length; ++i) {
         if (event.results[i].isFinal) {
             const text = event.results[i][0].transcript.trim();
-            const labeled = `Speaker ${speakerIndex}: ${text}`;
-            fullConversation += labeled + '\n';
-            transcriptEl.innerText = fullConversation;
+            
+            const messageEl = document.createElement('div');
+            messageEl.classList.add('message', currentSpeaker.toLowerCase());
+            messageEl.innerText = text;
+            transcriptEl.appendChild(messageEl);
+            transcriptEl.scrollTop = transcriptEl.scrollHeight;
 
-            // Alternate speakers
-            speakerIndex = speakerIndex === 1 ? 2 : 1;
+            fullConversation += `${currentSpeaker}: ${text}\n`;
 
-            // Send to backend
+            currentSpeaker = currentSpeaker === 'Caller' ? 'Receiver' : 'Caller';
+
             const response = await fetch('http://127.0.0.1:5000/classify', {
                 method: 'POST',
                 headers: {
@@ -115,11 +80,13 @@ recognition.onresult = async (event) => {
 
             const data = await response.json();
             if (data.scam_probability !== undefined) {
-                scamProbEl.innerText = `Scam Probability: ${data.scam_probability}`;
+                scamProbEl.innerText = `${(data.scam_probability * 100).toFixed(2)}%`;
             }
             if (data.suggested_reply) {
-                suggestedReplyEl.innerText = `Suggested Reply: ${data.suggested_reply}`;
-            } else {
+                suggestedReplyEl.innerText = data.suggested_reply;
+            }
+            else {
+                suggestedReplyEl.innerText = 'No reply suggested yet.';
                 console.log('Error in getting reply:', data.error);
             }
         }
@@ -128,7 +95,6 @@ recognition.onresult = async (event) => {
 
 
 window.addEventListener('DOMContentLoaded', () => {
-    // Wait a moment before allowing recognition
     setTimeout(() => {
         recognitionReady = true;
         console.log("Speech recognition engine ready.");
