@@ -1,74 +1,162 @@
 from flask import Flask, request, jsonify, render_template
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import torch
-import torch.nn.functional as F
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
+from typing import TypedDict, Literal, Optional
+from pydantic import BaseModel, Field
 from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnableLambda
+from langchain_core.output_parsers import PydanticOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.graph import StateGraph, END
 
 load_dotenv()
 
-SCAM_MODEL_NAME = "BothBosu/bert-agent-scam-classifier-v1.0"
-SCAM_TOKENIZER = AutoTokenizer.from_pretrained(SCAM_MODEL_NAME)
-SCAM_MODEL = AutoModelForSequenceClassification.from_pretrained(SCAM_MODEL_NAME)
 
+# Pydantic Models for structured output
+class ScamClassification(BaseModel):
+    """Classification result with confidence level and optional reply."""
+    confidence_level: Literal["Very High", "High", "Not Clear", "Low", "Very Low"] = Field(
+        description="Confidence level of scam detection"
+    )
+    suggested_reply: Optional[str] = Field(
+        default=None, 
+        description="Suggested reply when confidence is 'Not Clear' or 'High'"
+    )
 
-def get_scam_probability(conversation: str) -> float:
-    """
-    Calculates the scam probability for a given conversation using the pre-loaded model.
-    """
-    scam_inputs = SCAM_TOKENIZER(conversation, return_tensors="pt", truncation=True, padding=True, max_length=512)
-    with torch.no_grad():
-        scam_outputs = SCAM_MODEL(**scam_inputs)
-        scam_probs = F.softmax(scam_outputs.logits, dim=1)
-        scam_prob = scam_probs[0][1].item()
-    return scam_prob
+# State management for LangGraph
+class ConversationState(TypedDict):
+    conversation: str
+    summary: str
+    classification: Optional[ScamClassification]
+    cycles_count: int
 
+def count_conversation_cycles(conversation: str) -> int:
+    """Count the number of back-and-forth cycles in the conversation."""
+    lines = [line.strip() for line in conversation.strip().split('\n') if line.strip()]
+    caller_lines = [line for line in lines if line.lower().startswith('caller:')]
+    receiver_lines = [line for line in lines if line.lower().startswith('receiver:')]
+    return min(len(caller_lines), len(receiver_lines))
 
-def create_reply_generation_chain():
-    """
-    Creates a LangChain chain for generating a suggested reply using Google Gemini.
-    """
+def conversation_summarizer_node(state: ConversationState) -> ConversationState:
+    """Node 1: Summarize the conversation focusing on the caller side."""
+    conversation = state["conversation"]
+    
     prompt_template = """
-        You are the Receiver in the following conversation:
+    You are a call summarizer assistant. You need to summarize this phone conversation while focusing more on the Caller side and not keeping the receiver replies much into context unless they are very important.
 
-        {conversation}
+    Conversation:
+    {conversation}
 
-        Your goal is to politely and subtly challenge the Caller to help detect a potential scam.
-
-        Ask a question that:
-        - Requests specific info a real bank agent should know (e.g., last 4 digits of account).
-        - Does NOT reveal any personal information.
-        - Prompts the caller to prove their authenticity.
-
-        Only output the reply sentence. Do NOT repeat the conversation.
-
-        Reply:
+    Instructions:
+    - Focus primarily on what the CALLER is saying and doing
+    - Include receiver responses only if they are crucial to understanding the context
+    - In the last line of summary, clearly mention what was the last reply/question by the Caller (The current conversation point)
+    - Keep the summary concise but comprehensive
+    
+    Summary:
     """
+    
     prompt = PromptTemplate(
         template=prompt_template,
         input_variables=["conversation"]
     )
-
+    
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.0-flash", 
-        temperature=0.7,
-        max_output_tokens=50
+        temperature=0.3,
+        max_output_tokens=300
     )
+    
+    chain = prompt | llm
+    summary = chain.invoke({"conversation": conversation}).content
+    
+    state["summary"] = summary
+    return state
 
-    chain = prompt | llm | StrOutputParser()
-    return chain
+def classifier_and_replier_node(state: ConversationState) -> ConversationState:
+    """Node 2: Classify the conversation and generate reply if needed."""
+    summary = state["summary"]
+    
+    prompt_template = """
+    You are a scam call detection specialist. Analyze the following conversation summary and classify it into one of five confidence levels for scam likelihood.
+
+    Conversation Summary:
+    {summary}
+
+    Classification Guidelines:
+    - "Very High": Clear scam indicators (urgency, suspicious requests, impersonation)
+    - "High": Strong scam indicators but some uncertainty
+    - "Not Clear": Unclear or insufficient information to make confident assessment
+    - "Low": Unlikely to be scam but has some minor concerning elements
+    - "Very Low": Clearly legitimate conversation
+
+    Special Instructions:
+    - When the confidence level is "Not Clear" OR "High", you MUST provide a suggested reply
+    - The suggested reply should help the receiver gather more information to determine if it's a scam
+    - The reply should be polite but probing, asking for verification or specific details
+    - Do NOT reveal personal information in the suggested reply
+
+    Output the result in the specified JSON format.
+
+    {format_instructions}
+    """
+    
+    parser = PydanticOutputParser(pydantic_object=ScamClassification)
+    
+    prompt = PromptTemplate(
+        template=prompt_template,
+        input_variables=["summary"],
+        partial_variables={"format_instructions": parser.get_format_instructions()}
+    )
+    
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash", 
+        temperature=0.4,
+        max_output_tokens=200
+    )
+    
+    chain = prompt | llm | parser
+    classification = chain.invoke({"summary": summary})
+    
+    state["classification"] = classification
+    return state
+
+def should_process_conversation(state: ConversationState) -> str:
+    """Decision node: Check if conversation has enough cycles."""
+    if state["cycles_count"] >= 2:
+        return "summarize"
+    else:
+        return "insufficient_data"
+
+# Create the LangGraph workflow
+def create_scam_detection_workflow():
+    """Create the LangGraph workflow for scam detection."""
+    workflow = StateGraph(ConversationState)
+    
+    # Add nodes
+    workflow.add_node("summarize", conversation_summarizer_node)
+    workflow.add_node("classify", classifier_and_replier_node)
+    
+    # Add edges
+    workflow.set_conditional_entry_point(
+        should_process_conversation,
+        {
+            "summarize": "summarize",
+            "insufficient_data": END
+        }
+    )
+    
+    workflow.add_edge("summarize", "classify")
+    workflow.add_edge("classify", END)
+    
+    return workflow.compile()
 
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)
 
-scam_classification_chain = RunnableLambda(get_scam_probability)
-reply_generation_chain = create_reply_generation_chain()
+# Initialize the workflow
+scam_detection_workflow = create_scam_detection_workflow()
 
 @app.route('/')
 def index():
@@ -78,7 +166,7 @@ def index():
 @app.route('/classify', methods=['POST'])
 def classify():
     """
-    Classifies a conversation as scam or not and suggests a reply if uncertain.
+    Classifies a conversation as scam or not using the new LangGraph workflow.
     """
     data = request.get_json()
     conversation = data.get("conversation", "")
@@ -86,46 +174,47 @@ def classify():
     if not conversation.strip():
         return jsonify({"error": "Empty conversation"}), 400
 
-    turns = [turn for turn in conversation.strip().split('\n') if turn.strip()]
-    if len(turns) < 4:
+    # Count conversation cycles
+    cycles_count = count_conversation_cycles(conversation)
+    
+    # Check if we have at least 2 back-and-forth cycles
+    if cycles_count < 2:
         return jsonify({
-            "scam_probability": 0.0,
-            "non_scam_probability": 1.0,
+            "confidence_level": "Insufficient Data",
             "suggested_reply": "Add more conversation to start scam detection. At least 2 Caller-Receiver cycles are needed."
         })
 
-    caller_conversation = "\n".join([turn for turn in turns if turn.lower().startswith('caller:')])
-
-    print("Caller conversation for scam detection:\n", caller_conversation)
+    # Prepare state for the workflow
+    initial_state = ConversationState(
+        conversation=conversation,
+        summary="",
+        classification=None,
+        cycles_count=cycles_count
+    )
 
     try:
-        scam_prob = scam_classification_chain.invoke(caller_conversation)
-        non_scam_prob = 1.0 - scam_prob
-    except (ValueError, TypeError) as e:
-        print(f"Error parsing scam probability: {e}")
-        return jsonify({"error": "Could not determine scam probability from model output."}), 500
+        # Run the LangGraph workflow
+        result = scam_detection_workflow.invoke(initial_state)
+        
+        if result["classification"]:
+            classification = result["classification"]
+            response_data = {
+                "confidence_level": classification.confidence_level,
+                "suggested_reply": classification.suggested_reply or "No reply needed."
+            }
+        else:
+            response_data = {
+                "confidence_level": "Processing Error",
+                "suggested_reply": "Could not process the conversation."
+            }
+            
+        return jsonify(response_data)
+        
     except Exception as e:
-        print(f"Scam classification invocation error: {e}")
-        return jsonify({"error": f"Error during scam classification: {str(e)}"}), 500
-
-    if scam_prob < 0.4:
-        suggested_reply = "No Reply needed, it's likely a non-scam conversation."
-    elif scam_prob > 0.65:
-        suggested_reply = "No Reply needed, it's likely a scam."
-    else:
-        try:
-            raw_reply = reply_generation_chain.invoke({"conversation": conversation})
-            cleaned_reply = raw_reply.strip().replace("\n", " ").strip()
-            suggested_reply = cleaned_reply if cleaned_reply else "Sorry, couldn't generate a reply."
-        except Exception as e:
-            suggested_reply = f"Error generating reply: {str(e)}"
-            print(f"LangChain invocation error: {e}")
-
-    return jsonify({
-        "scam_probability": round(scam_prob, 4),
-        "non_scam_probability": round(non_scam_prob, 4),
-        "suggested_reply": suggested_reply
-    })
+        print(f"Workflow execution error: {e}")
+        return jsonify({
+            "error": f"Error during scam detection workflow: {str(e)}"
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True)

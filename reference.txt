@@ -1,0 +1,12 @@
+Workflow of the new proposed app-
+1. Backend Receives the Call Transcription.
+2. If the Conversation has atleast 2 back and forth (Caller-Receiver) cycles, continue.
+3. Give it to conversation summariser created with google gemini using langgraph with a prompt that explains:
+    - that you are a call summariser assistant and you have to summarise this call while focusing more on the Caller side and not keeping the receiver replies much into context until its very important.
+    - in the last line of summary clearly mention what was the last reply/question by the Caller. (The current conversation point.)
+4. This summary should now go to another node called the classifier and replier node using gemini.
+    - this node takes the summary and flags the conversation into one of the five labels determining how likely it could be a scam call. 
+    - the labels are - Very High, High, Can't be determined, Low, Very Low
+    - also when the label is at Can't be determined / high the model then should also return a reply that will help the model boost it's confidence over determining whether scam or not.
+    - for this model enforce a pydantic schema output.
+5. Then it should continously do repeated request response cycles of the output(json) with the frontend.

@@ -49,7 +49,9 @@ startBtn.addEventListener('click', () => {
         startBtn.textContent = 'Start Listening';
         fullConversation = '';
         transcriptEl.innerText = '';
-        scamProbEl.innerText = '0';
+        scamProbEl.innerText = 'Not analyzed yet';
+        scamProbEl.style.color = '#000000';
+        suggestedReplyEl.innerText = 'No reply suggested yet.';
         currentSpeaker = 'Receiver';
     }
     recognizing = !recognizing;
@@ -79,15 +81,30 @@ recognition.onresult = async (event) => {
             });
 
             const data = await response.json();
-            if (data.scam_probability !== undefined) {
-                scamProbEl.innerText = `${(data.scam_probability * 100).toFixed(2)}%`;
+            if (data.confidence_level) {
+                // Map confidence levels to colors and display
+                const confidenceColors = {
+                    "Very High": "#ff4444",
+                    "High": "#ff8800", 
+                    "Not Clear": "#ffcc00",
+                    "Low": "#88cc00",
+                    "Very Low": "#44cc44",
+                    "Insufficient Data": "#cccccc",
+                    "Processing Error": "#cc0000"
+                };
+                
+                scamProbEl.innerText = data.confidence_level;
+                scamProbEl.style.color = confidenceColors[data.confidence_level] || "#000000";
             }
             if (data.suggested_reply) {
                 suggestedReplyEl.innerText = data.suggested_reply;
             }
+            else if (data.error) {
+                suggestedReplyEl.innerText = `Error: ${data.error}`;
+                console.log('Error in classification:', data.error);
+            }
             else {
                 suggestedReplyEl.innerText = 'No reply suggested yet.';
-                console.log('Error in getting reply:', data.error);
             }
         }
     }
