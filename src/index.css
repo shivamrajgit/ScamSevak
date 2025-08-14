@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/* Theme variables (integrated here because tailwind.config is not used) */
+:root {
+  /* Brand colors */
+  --color-primary: #0f172a;
+  --color-accent: #06b6d4;
+
+  /* Typography & misc */
+  --font-stack: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  --line-height: 1.5;
+  --font-weight-default: 400;
+
+  /* Light-on-dark (default) */
+  --text-color: rgba(255, 255, 255, 0.87);
+  --bg-color: #242424;
+
+  /* Links & UI */
+  --link-color: #646cff;
+  --link-hover: #535bf2;
+  --button-bg: #1a1a1a;
+  --button-bg-light: #f9f9f9;
+  --focus-ring-color: -webkit-focus-ring-color;
+
+  font-family: var(--font-stack);
+  line-height: var(--line-height);
+  font-weight: var(--font-weight-default);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
