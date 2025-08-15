@@ -52,12 +52,14 @@ async def classify(request: Request):
             classification = result["classification"]
             response_data = {
                 "confidence_level": classification.confidence_level,
-                "suggested_reply": classification.suggested_reply or "No reply needed."
+                "suggested_reply": classification.suggested_reply or "No reply needed.",
+                "summary": result["summary"] or "No summary available."
             }
         else:
             response_data = {
                 "confidence_level": "Processing Error",
-                "suggested_reply": "Could not process the conversation."
+                "suggested_reply": "Could not process the conversation.",
+                "summary": "No summary available."
             }
             
         return JSONResponse(content=response_data)

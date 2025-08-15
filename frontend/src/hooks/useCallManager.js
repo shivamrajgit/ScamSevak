@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { classifyConversation as classifyAPI, API_BASE } from '../utils/api.js'
+import axios from 'axios'
 
-export default function useCallManager() {
+export default function useCallManager(user) {
     const [recognizing, setRecognizing] = useState(false)
     const [recognitionReady, setRecognitionReady] = useState(false)
     const [messages, setMessages] = useState([]) // {who, text}
@@ -98,15 +99,33 @@ export default function useCallManager() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
-    useEffect(() => {
-        if (!fullConversation.trim()) return
-        classifyConversation(fullConversation)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fullConversation])
+    // NOTE: Removed the old auto-classify useEffect that listened to fullConversation changes.
+    // It previously did: if (!fullConversation.trim()) return; classifyConversation(fullConversation)
 
     const addMessage = (who, text) => {
         setMessages(prev => [...prev, { who, text }])
-        setFullConversation(prev => (prev ? prev + `\n` : '') + `${who}: ${text}`)
+
+        // update fullConversation and trigger classify ONLY when Caller speaks
+        setFullConversation(prev => {
+            const newConv = (prev ? prev + `\n` : '') + `${who}: ${text}`
+
+            if (who === 'Caller') {
+                // send only a small window to reduce payload/latency
+                const N = 8
+                const parts = newConv.split('\n').filter(Boolean)
+                const window = parts.slice(-N).join('\n')
+
+                // trigger classification (do not await here)
+                try {
+                    handleClassify(window)
+                } catch (e) {
+                    // handleClassify is async — if it throws synchronously, log it
+                    console.error('Error triggering classification:', e)
+                }
+            }
+
+            return newConv
+        })
     }
 
     const classifyConversation = async (conversation) => {
@@ -125,6 +144,41 @@ export default function useCallManager() {
             console.error(e)
             setScamLevel('Processing Error')
             setSuggestedReply('Could not reach classification server.')
+        }
+    }
+
+    const handleClassify = async (conversation) => {
+        try {
+            const PY_API = import.meta.env.VITE_PY_API_URL || 'http://localhost:5000'
+            const AUTH_API = import.meta.env.VITE_EXP_API_URL || 'http://localhost:8000/api'
+
+            const pyBase = PY_API.replace(/\/$/, '')   // ensure no trailing slash
+            const authBase = AUTH_API.replace(/\/$/, '')
+
+            // 1) Call Python classify endpoint
+            const classifyRes = await axios.post(
+                `${pyBase}/classify`,
+                { conversation }
+            )
+            const { summary, confidence_level, suggested_reply } = classifyRes.data
+
+            // Update UI state as needed
+            setScamLevel(confidence_level || 'Not analyzed yet')
+            setSuggestedReply(suggested_reply || 'No reply suggested.')
+
+            // Save summary only if logged in (not guest)
+            if (user && !user.guest && summary) {
+                try {
+                    await axios.post(`${authBase}/save-summary`, {
+                        token: user.token,
+                        summary
+                    })
+                } catch (saveErr) {
+                    console.error('save-summary failed:', saveErr)
+                }
+            }
+        } catch (err) {
+            setError('Error analyzing conversation.')
         }
     }
 
@@ -191,8 +245,11 @@ export default function useCallManager() {
         suggestedReply,
         error,
         transcriptRef,
+        fullConversation,
         handleStartStop,
         handleEndCall,
-        handleCopyReply
+        handleCopyReply,
+        handleClassify,
+        classifyConversation
     }
 }

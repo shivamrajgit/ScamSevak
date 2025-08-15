@@ -1,4 +1,4 @@
-export const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000'
+export const API_BASE = import.meta.env.VITE_PY_API_URL || 'http://127.0.0.1:5000'
 
 export async function classifyConversation(conversation) {
     const res = await fetch(`${API_BASE}/classify`, {
