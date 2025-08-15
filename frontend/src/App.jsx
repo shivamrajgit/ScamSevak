@@ -3,7 +3,7 @@ import ScamMeter from './components/ScamMeter.jsx'
 import MessageBubble from './components/MessageBubble.jsx'
 import useCallManager from './hooks/useCallManager.js'
 
-export default function App() {
+export default function App({ user, onLogout }) {
   const {
     recognitionReady,
     recognizing,
@@ -17,7 +17,7 @@ export default function App() {
     handleStartStop,
     handleEndCall,
     handleCopyReply
-  } = useCallManager()
+  } = useCallManager(user)
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
@@ -25,7 +25,7 @@ export default function App() {
         <div className="md:col-span-2 flex flex-col">
           <header className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-2xl font-semibold">ScamGuard</h1>
+              <h1 className="text-2xl font-semibold">ScamSevak</h1>
               <p className="text-sm text-gray-500">Real-time conversation security assistant</p>
             </div>
             <div className="space-x-2">
@@ -35,6 +35,7 @@ export default function App() {
                 {callActive ? 'End Call' : 'Start Call'}
               </button>
               <button onClick={handleEndCall} className="px-4 py-2 rounded-md bg-gray-200 text-gray-800">Reset</button>
+              <button onClick={onLogout} className="px-4 py-2 rounded-md bg-yellow-400 text-black">Logout</button>
             </div>
           </header>
 

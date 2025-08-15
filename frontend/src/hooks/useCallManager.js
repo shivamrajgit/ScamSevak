@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { classifyConversation as classifyAPI, API_BASE } from '../utils/api.js'
+import axios from 'axios'
 
-export default function useCallManager() {
+export default function useCallManager(user) {
     const [recognizing, setRecognizing] = useState(false)
     const [recognitionReady, setRecognitionReady] = useState(false)
     const [messages, setMessages] = useState([]) // {who, text}
@@ -128,6 +129,32 @@ export default function useCallManager() {
         }
     }
 
+    const handleClassify = async (conversation) => {
+        try {
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+            // Call classify endpoint (Python backend)
+            const classifyRes = await axios.post(
+                `${apiUrl.replace('/api', '')}/classify`,
+                { conversation }
+            )
+            const { summary, confidence_level, suggested_reply } = classifyRes.data
+
+            // Update UI state as needed
+            setScamLevel(confidence_level || 'Not analyzed yet')
+            setSuggestedReply(suggested_reply || 'No reply suggested.')
+
+            // Save summary only if logged in (not guest)
+            if (user && !user.guest && summary) {
+                await axios.post(`${apiUrl}/save-summary`, {
+                    token: user.token,
+                    summary
+                })
+            }
+        } catch (err) {
+            setError('Error analyzing conversation.')
+        }
+    }
+
     const handleStartStop = () => {
         if (!recognitionReady) {
             setError('Speech recognition not ready yet.')
@@ -193,6 +220,7 @@ export default function useCallManager() {
         transcriptRef,
         handleStartStop,
         handleEndCall,
-        handleCopyReply
+        handleCopyReply,
+        handleClassify
     }
 }
