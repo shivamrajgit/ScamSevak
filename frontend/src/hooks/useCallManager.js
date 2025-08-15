@@ -99,15 +99,33 @@ export default function useCallManager(user) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
-    useEffect(() => {
-        if (!fullConversation.trim()) return
-        classifyConversation(fullConversation)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fullConversation])
+    // NOTE: Removed the old auto-classify useEffect that listened to fullConversation changes.
+    // It previously did: if (!fullConversation.trim()) return; classifyConversation(fullConversation)
 
     const addMessage = (who, text) => {
         setMessages(prev => [...prev, { who, text }])
-        setFullConversation(prev => (prev ? prev + `\n` : '') + `${who}: ${text}`)
+
+        // update fullConversation and trigger classify ONLY when Caller speaks
+        setFullConversation(prev => {
+            const newConv = (prev ? prev + `\n` : '') + `${who}: ${text}`
+
+            if (who === 'Caller') {
+                // send only a small window to reduce payload/latency
+                const N = 8
+                const parts = newConv.split('\n').filter(Boolean)
+                const window = parts.slice(-N).join('\n')
+
+                // trigger classification (do not await here)
+                try {
+                    handleClassify(window)
+                } catch (e) {
+                    // handleClassify is async — if it throws synchronously, log it
+                    console.error('Error triggering classification:', e)
+                }
+            }
+
+            return newConv
+        })
     }
 
     const classifyConversation = async (conversation) => {
@@ -131,10 +149,15 @@ export default function useCallManager(user) {
 
     const handleClassify = async (conversation) => {
         try {
-            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
-            // Call classify endpoint (Python backend)
+            const PY_API = import.meta.env.VITE_PY_API_URL || 'http://localhost:5000'
+            const AUTH_API = import.meta.env.VITE_EXP_API_URL || 'http://localhost:8000/api'
+
+            const pyBase = PY_API.replace(/\/$/, '')   // ensure no trailing slash
+            const authBase = AUTH_API.replace(/\/$/, '')
+
+            // 1) Call Python classify endpoint
             const classifyRes = await axios.post(
-                `${apiUrl.replace('/api', '')}/classify`,
+                `${pyBase}/classify`,
                 { conversation }
             )
             const { summary, confidence_level, suggested_reply } = classifyRes.data
@@ -145,10 +168,14 @@ export default function useCallManager(user) {
 
             // Save summary only if logged in (not guest)
             if (user && !user.guest && summary) {
-                await axios.post(`${apiUrl}/save-summary`, {
-                    token: user.token,
-                    summary
-                })
+                try {
+                    await axios.post(`${authBase}/save-summary`, {
+                        token: user.token,
+                        summary
+                    })
+                } catch (saveErr) {
+                    console.error('save-summary failed:', saveErr)
+                }
             }
         } catch (err) {
             setError('Error analyzing conversation.')
@@ -218,9 +245,11 @@ export default function useCallManager(user) {
         suggestedReply,
         error,
         transcriptRef,
+        fullConversation,
         handleStartStop,
         handleEndCall,
         handleCopyReply,
-        handleClassify
+        handleClassify,
+        classifyConversation
     }
 }
