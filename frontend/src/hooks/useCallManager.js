@@ -99,9 +99,6 @@ export default function useCallManager(user) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
-    // NOTE: Removed the old auto-classify useEffect that listened to fullConversation changes.
-    // It previously did: if (!fullConversation.trim()) return; classifyConversation(fullConversation)
-
     const addMessage = (who, text) => {
         setMessages(prev => [...prev, { who, text }])
 
@@ -119,7 +116,6 @@ export default function useCallManager(user) {
                 try {
                     handleClassify(window)
                 } catch (e) {
-                    // handleClassify is async — if it throws synchronously, log it
                     console.error('Error triggering classification:', e)
                 }
             }
@@ -152,7 +148,7 @@ export default function useCallManager(user) {
             const PY_API = import.meta.env.VITE_PY_API_URL || 'http://localhost:5000'
             const AUTH_API = import.meta.env.VITE_EXP_API_URL || 'http://localhost:8000/api'
 
-            const pyBase = PY_API.replace(/\/$/, '')   // ensure no trailing slash
+            const pyBase = PY_API.replace(/\/$/, '')
             const authBase = AUTH_API.replace(/\/$/, '')
 
             // 1) Call Python classify endpoint
@@ -182,6 +178,50 @@ export default function useCallManager(user) {
         }
     }
 
+    // Full reset helper: stops recognition and clears all conversation state.
+    const fullReset = () => {
+        const r = recognitionRef.current
+        try { r && r.stop() } catch (e) { }
+
+        setCallActive(false)
+        setRecognizing(false)
+
+        if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current)
+            silenceTimerRef.current = null
+        }
+
+        setMessages([])
+        setFullConversation('')
+        setScamLevel('Not analyzed yet')
+        setSuggestedReply('No reply suggested.')
+        setCurrentSpeakerState('Receiver')
+        setError(null)
+    }
+
+    // End call: stops listening but preserves messages/analysis for review.
+    const handleEndCall = () => {
+        const r = recognitionRef.current
+        try { r && r.stop() } catch (e) { }
+        setCallActive(false)
+        setRecognizing(false)
+        if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current)
+            silenceTimerRef.current = null
+        }
+        // NOTE: Intentionally do NOT clear messages, scamLevel, suggestedReply, or fullConversation.
+        // This preserves the transcript and analysis after ending a call.
+    }
+
+    const handleCopyReply = async () => {
+        try {
+            await navigator.clipboard.writeText(suggestedReply || '')
+        } catch (e) {
+            console.error(e)
+        }
+    }
+
+    // Start/Stop: when starting a new call, clear previous data (same as Reset) to ensure fresh session.
     const handleStartStop = () => {
         if (!recognitionReady) {
             setError('Speech recognition not ready yet.')
@@ -194,6 +234,10 @@ export default function useCallManager(user) {
         }
 
         if (!callActive) {
+            // If there is a previous conversation present, clear everything before starting a new call.
+            if (messages.length > 0 || fullConversation) {
+                fullReset()
+            }
             setError(null)
             setCallActive(true)
             setCurrentSpeakerState('Receiver')
@@ -210,29 +254,9 @@ export default function useCallManager(user) {
         }
     }
 
-    const handleEndCall = () => {
-        const r = recognitionRef.current
-        try { r && r.stop() } catch (e) { }
-        setCallActive(false)
-        setRecognizing(false)
-        if (silenceTimerRef.current) {
-            clearTimeout(silenceTimerRef.current)
-            silenceTimerRef.current = null
-        }
-        setMessages([])
-        setFullConversation('')
-        setScamLevel('Not analyzed yet')
-        setSuggestedReply('No reply suggested.')
-        setCurrentSpeakerState('Receiver')
-        setError(null)
-    }
-
-    const handleCopyReply = async () => {
-        try {
-            await navigator.clipboard.writeText(suggestedReply || '')
-        } catch (e) {
-            console.error(e)
-        }
+    // Expose a reset function for the UI Reset button.
+    const handleReset = () => {
+        fullReset()
     }
 
     return {
@@ -248,6 +272,7 @@ export default function useCallManager(user) {
         fullConversation,
         handleStartStop,
         handleEndCall,
+        handleReset,
         handleCopyReply,
         handleClassify,
         classifyConversation
