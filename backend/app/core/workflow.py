@@ -24,16 +24,16 @@ def conversation_summarizer_node(state: ConversationState) -> ConversationState:
     conversation = state["conversation"]
     
     prompt_template = """
-    You are a call summarizer assistant. You need to summarize this phone conversation while focusing more on the Caller side and not keeping the receiver replies much into context unless they are very important.
+    You are a professional call summarizer. Your task is to summarize this phone conversation, with a primary focus on what the Caller said or asked.
 
     Conversation:
     {conversation}
 
-    Instructions:
-    - Focus primarily on what the CALLER is saying and doing
-    - Include receiver responses only if they are crucial to understanding the context
-    - In the last line of summary, clearly mention what was the last reply/question by the Caller (The current conversation point)
-    - Keep the summary concise but comprehensive
+    Guidelines:
+    - Focus on the Caller's perspective, intentions, and key points.
+    - Omit personal credentials, sensitive details, filler words, and irrelevant small talk.
+    - Keep the summary concise but include all important context so it remains self-contained.
+    - The final sentence of the summary must explicitly state the Caller's most recent reply or question (i.e., the current point in the conversation).
     
     Summary:
     """
@@ -60,26 +60,23 @@ def classifier_and_replier_node(state: ConversationState) -> ConversationState:
     summary = state["summary"]
     
     prompt_template = """
-    You are a scam call detection specialist. Analyze the following conversation summary and classify it into one of five confidence levels for scam likelihood.
+    You are a scam call detection expert. Based on the conversation summary below, classify the scam likelihood into one of the five confidence levels.
 
     Conversation Summary:
     {summary}
 
-    Classification Guidelines:
-    - "Very High": Clear scam indicators (urgency, suspicious requests, impersonation)
-    - "High": Strong scam indicators but some uncertainty
-    - "Not Clear": Unclear or insufficient information to make confident assessment
-    - "Low": Unlikely to be scam but has some minor concerning elements
-    - "Very Low": Clearly legitimate conversation
+    Confidence Levels:
+    - Very High: Obvious scam (urgent threats, suspicious requests, impersonation)
+    - High: Strong scam signs, but some uncertainty
+    - Not Clear: Insufficient evidence, needs more probing
+    - Low: Probably legitimate, but minor concerns
+    - Very Low: Clearly legitimate
 
-    Special Instructions:
-    - When the confidence level is "Not Clear" OR "High", you MUST provide a suggested reply
-    - The suggested reply should help the receiver gather more information to determine if it's a scam
-    - The reply should be polite but probing, asking for verification or specific details
-    - Do NOT reveal personal information in the suggested reply
+    Rules:
+    - If classification is "High" or "Not Clear", also suggest ONE short, polite probing reply that could help confirm legitimacy (do not reveal personal information).
+    - Keep the reply natural and under 15 words.
 
-    Output the result in the specified JSON format.
-
+    Respond in this JSON format:
     {format_instructions}
     """
     
